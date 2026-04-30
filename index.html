@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Aplikasi Denah Ujian - Support Excel & Folder Foto</title>
+    <title>Aplikasi Denah Ujian - Perbaikan Deteksi Nama</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Library untuk membaca file Excel -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -108,27 +108,22 @@
 
         function cleanName(name) {
             if (!name) return "";
-            return String(name).replace(/\./g, '').trim();
+            // Menghapus titik dan membersihkan spasi berlebih
+            return String(name).replace(/\./g, '').replace(/\s+/g, ' ').trim();
         }
 
-        // Fungsi baru untuk menangani file Excel dan CSV
         async function handleDataUpload() {
             const fileInput = document.getElementById('dataInput');
             const file = fileInput.files[0];
             if (!file) return alert("Pilih file terlebih dahulu!");
 
-            const fileName = file.name.toLowerCase();
             const reader = new FileReader();
 
             reader.onload = function(e) {
                 const data = new Uint8Array(e.target.result);
                 const workbook = XLSX.read(data, { type: 'array' });
-                
-                // Ambil sheet pertama
                 const firstSheetName = workbook.SheetNames[0];
                 const worksheet = workbook.Sheets[firstSheetName];
-                
-                // Konversi ke format JSON (array of arrays)
                 const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
                 
                 processJsonData(jsonData);
@@ -146,29 +141,38 @@
                 const row = data[i];
                 if (!row || row.length === 0) continue;
 
-                // Cari baris header
+                // Mencari baris header (biasanya baris yang mengandung 'nomor peserta')
                 if (!headerFound) {
                     const rowText = row.join(' ').toLowerCase();
-                    if (rowText.includes('nomor peserta') && rowText.includes('nama')) {
+                    if (rowText.includes('nomor peserta')) {
                         headerFound = true;
-                        // Map index kolom
+                        
                         row.forEach((cell, idx) => {
-                            const val = String(cell).toLowerCase();
-                            if (val.includes('nomor peserta')) colIndex.noPeserta = idx;
-                            if (val.includes('nisn')) colIndex.nisn = idx;
-                            if (val.includes('nama')) colIndex.nama = idx;
+                            const val = String(cell || '').toLowerCase().trim();
+                            
+                            // Logika Pencarian Kolom yang Lebih Ketat
+                            if (val === 'nomor peserta') {
+                                colIndex.noPeserta = idx;
+                            } else if (val === 'nisn') {
+                                colIndex.nisn = idx;
+                            } else if (val === 'nama' || val === 'nama siswa') {
+                                // Prioritaskan kolom yang hanya berisi kata 'nama' 
+                                // agar tidak tertukar dengan 'nama ayah' atau 'nama ibu'
+                                colIndex.nama = idx;
+                            }
                         });
                         continue;
                     }
                 }
 
-                // Ambil data jika header sudah ditemukan
+                // Mengambil data setelah header ditemukan
                 if (headerFound) {
                     const noPeserta = String(row[colIndex.noPeserta] || '').trim();
                     const nisn = String(row[colIndex.nisn] || '').trim();
                     const rawNama = String(row[colIndex.nama] || '').trim();
                     
-                    if (noPeserta && rawNama) {
+                    // Validasi: pastikan kolom nama bukan bagian dari header
+                    if (noPeserta && rawNama && noPeserta.toLowerCase() !== 'nomor peserta') {
                         participants.push({ 
                             noPeserta, 
                             nisn, 
@@ -179,14 +183,13 @@
             }
 
             if (participants.length > 0) {
-                alert(`Berhasil memuat ${participants.length} data siswa dari Excel.`);
+                alert(`Berhasil memuat ${participants.length} data siswa.`);
                 document.getElementById('dataStatus').innerText = `${participants.length} Siswa Terbaca`;
             } else {
-                alert("Format kolom tidak dikenali. Pastikan ada kolom 'Nomor Peserta', 'NISN', dan 'NAMA'.");
+                alert("Kolom tidak ditemukan. Pastikan ada kolom dengan judul 'Nomor Peserta', 'NISN', dan 'NAMA'.");
             }
         }
 
-        // Handle Folder Upload
         document.getElementById('folderInput').addEventListener('change', function(e) {
             const files = e.target.files;
             photoMap = {};
