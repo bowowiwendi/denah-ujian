@@ -3,8 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Aplikasi Denah Ujian - Fitur Unggah Folder</title>
+    <title>Aplikasi Denah Ujian - Support Excel & Folder Foto</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Library untuk membaca file Excel -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <style>
         .seat-grid {
             display: grid;
@@ -53,16 +55,17 @@
 
     <div class="container mx-auto p-4 md:p-8 no-print">
         <header class="mb-8 text-center">
-            <h1 class="text-3xl font-bold text-blue-900 uppercase">SISTEM DENAH UJIAN MADRASAH</h1>
-            <p class="text-gray-600 italic">Dukungan Unggah Folder Foto & Multi-Format (JPG, JPEG, PNG)</p>
+            <h1 class="text-3xl font-bold text-blue-900 uppercase">SISTEM DENAH UJIAN</h1>
+            <p class="text-gray-600 italic">Mendukung File Excel (.xlsx), CSV, & Unggah Folder Foto</p>
         </header>
 
         <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-            <!-- Step 1: CSV -->
+            <!-- Step 1: Excel/CSV -->
             <div class="bg-white p-6 rounded-xl shadow-md border-t-4 border-green-500">
-                <h2 class="font-bold mb-4 text-green-700">1. Unggah Data CSV</h2>
-                <input type="file" id="csvFileInput" accept=".csv" class="block w-full text-sm mb-4">
-                <button onclick="handleFileUpload()" class="w-full bg-green-600 text-white py-2 rounded font-bold hover:bg-green-700">Proses Data</button>
+                <h2 class="font-bold mb-4 text-green-700">1. Unggah Data (Excel/CSV)</h2>
+                <input type="file" id="dataInput" accept=".csv, .xlsx, .xls" class="block w-full text-sm mb-4">
+                <button onclick="handleDataUpload()" class="w-full bg-green-600 text-white py-2 rounded font-bold hover:bg-green-700">Proses Data Siswa</button>
+                <div id="dataStatus" class="text-[10px] mt-2 text-gray-500 italic">Mendukung: .xlsx, .xls, .csv</div>
             </div>
 
             <!-- Step 2: Folder Foto -->
@@ -95,72 +98,106 @@
     <!-- Area Cetak -->
     <div id="printContainer" class="print-area p-4">
         <div class="no-print bg-white p-12 rounded-xl shadow-md text-center text-gray-400 italic">
-            Silakan unggah file CSV dan Folder Foto, lalu klik "Tampilkan Denah"
+            Silakan unggah file Excel/CSV dan Folder Foto, lalu klik "Tampilkan Denah"
         </div>
     </div>
 
     <script>
         let participants = [];
-        let photoMap = {}; // Menyimpan URL foto berdasarkan nama file (NISN)
+        let photoMap = {};
 
-        // Bersihkan nama dari titik
         function cleanName(name) {
             if (!name) return "";
-            return name.replace(/\./g, '').trim();
+            return String(name).replace(/\./g, '').trim();
         }
 
-        // Handle CSV Upload
-        function handleFileUpload() {
-            const fileInput = document.getElementById('csvFileInput');
-            if (!fileInput.files[0]) return alert("Pilih file CSV!");
+        // Fungsi baru untuk menangani file Excel dan CSV
+        async function handleDataUpload() {
+            const fileInput = document.getElementById('dataInput');
+            const file = fileInput.files[0];
+            if (!file) return alert("Pilih file terlebih dahulu!");
 
+            const fileName = file.name.toLowerCase();
             const reader = new FileReader();
-            reader.onload = (e) => {
-                const lines = e.target.result.split('\n');
-                participants = [];
-                let dataStart = false;
 
-                for (let line of lines) {
-                    const cols = line.split(',');
-                    if (line.toLowerCase().includes('nomor peserta')) {
-                        dataStart = true;
+            reader.onload = function(e) {
+                const data = new Uint8Array(e.target.result);
+                const workbook = XLSX.read(data, { type: 'array' });
+                
+                // Ambil sheet pertama
+                const firstSheetName = workbook.SheetNames[0];
+                const worksheet = workbook.Sheets[firstSheetName];
+                
+                // Konversi ke format JSON (array of arrays)
+                const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+                
+                processJsonData(jsonData);
+            };
+
+            reader.readAsArrayBuffer(file);
+        }
+
+        function processJsonData(data) {
+            participants = [];
+            let headerFound = false;
+            let colIndex = { noPeserta: -1, nisn: -1, nama: -1 };
+
+            for (let i = 0; i < data.length; i++) {
+                const row = data[i];
+                if (!row || row.length === 0) continue;
+
+                // Cari baris header
+                if (!headerFound) {
+                    const rowText = row.join(' ').toLowerCase();
+                    if (rowText.includes('nomor peserta') && rowText.includes('nama')) {
+                        headerFound = true;
+                        // Map index kolom
+                        row.forEach((cell, idx) => {
+                            const val = String(cell).toLowerCase();
+                            if (val.includes('nomor peserta')) colIndex.noPeserta = idx;
+                            if (val.includes('nisn')) colIndex.nisn = idx;
+                            if (val.includes('nama')) colIndex.nama = idx;
+                        });
                         continue;
                     }
+                }
+
+                // Ambil data jika header sudah ditemukan
+                if (headerFound) {
+                    const noPeserta = String(row[colIndex.noPeserta] || '').trim();
+                    const nisn = String(row[colIndex.nisn] || '').trim();
+                    const rawNama = String(row[colIndex.nama] || '').trim();
                     
-                    if (dataStart && cols.length >= 4) {
-                        const noPeserta = cols[1]?.trim();
-                        const nisn = cols[2]?.trim();
-                        const rawNama = cols[3]?.trim();
-                        
-                        if (noPeserta && rawNama) {
-                            participants.push({ 
-                                noPeserta, 
-                                nisn, 
-                                nama: cleanName(rawNama)
-                            });
-                        }
+                    if (noPeserta && rawNama) {
+                        participants.push({ 
+                            noPeserta, 
+                            nisn, 
+                            nama: cleanName(rawNama)
+                        });
                     }
                 }
-                alert(`Data CSV Berhasil: ${participants.length} Siswa Terbaca.`);
-            };
-            reader.readAsText(fileInput.files[0]);
+            }
+
+            if (participants.length > 0) {
+                alert(`Berhasil memuat ${participants.length} data siswa dari Excel.`);
+                document.getElementById('dataStatus').innerText = `${participants.length} Siswa Terbaca`;
+            } else {
+                alert("Format kolom tidak dikenali. Pastikan ada kolom 'Nomor Peserta', 'NISN', dan 'NAMA'.");
+            }
         }
 
-        // Handle Folder Upload (Membaca semua foto ke memori)
+        // Handle Folder Upload
         document.getElementById('folderInput').addEventListener('change', function(e) {
             const files = e.target.files;
             photoMap = {};
             let count = 0;
 
             for (let file of files) {
-                // Ambil nama file tanpa ekstensi
                 const fileNameWithExt = file.name;
                 const fileName = fileNameWithExt.split('.').slice(0, -1).join('.');
                 const ext = fileNameWithExt.split('.').pop().toLowerCase();
 
-                // Hanya terima format gambar yang didukung
                 if (['jpg', 'jpeg', 'png'].includes(ext)) {
-                    // Buat URL lokal untuk file tersebut
                     photoMap[fileName] = URL.createObjectURL(file);
                     count++;
                 }
@@ -168,14 +205,13 @@
             document.getElementById('photoStatus').innerText = `${count} Foto Berhasil Dimuat`;
         });
 
-        // Generate Denah
         function generateDenah() {
             const rows = parseInt(document.getElementById('rowsInput').value);
             const cols = parseInt(document.getElementById('colsInput').value);
             const cap = rows * cols;
             const container = document.getElementById('printContainer');
             
-            if (participants.length === 0) return alert("Belum ada data CSV!");
+            if (participants.length === 0) return alert("Belum ada data siswa!");
             
             container.innerHTML = '';
             const totalRuang = Math.ceil(participants.length / cap);
@@ -188,7 +224,7 @@
                 
                 roomDiv.innerHTML = `
                     <div class="text-center mb-6 border-b-2 border-black pb-2">
-                        <h1 class="text-2xl font-bold uppercase">DENAH TEMPAT DUDUK PESERTA UJIAN MADRASAH</h1>
+                        <h1 class="text-2xl font-bold uppercase">DENAH TEMPAT DUDUK PESERTA UJIAN</h1>
                         <h2 class="text-xl font-bold">RUANG ${r+1}</h2>
                     </div>
 
@@ -198,7 +234,6 @@
 
                     <div class="seat-grid" style="grid-template-columns: repeat(${cols}, minmax(0, 1fr))">
                         ${roomData.map(p => {
-                            // Cari foto di map berdasarkan NISN
                             const photoUrl = photoMap[p.nisn] || `https://ui-avatars.com/api/?name=${encodeURIComponent(p.nama)}&background=ffffff&color=000000&size=128&bold=true`;
                             
                             return `
